@@ -17,7 +17,14 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uploadsDir = path.join(__dirname, "uploads");
 fs.mkdirSync(uploadsDir, { recursive: true });
 
-app.use(cors({ origin: process.env.CLIENT_ORIGIN || "http://localhost:5173" }));
+
+app.use(cors({
+  origin: [
+    "http://localhost:5173",
+    "https://food-delivery-mern-project-wxx3.vercel.app",
+    "https://food-delivery-mern-project-wxx3-2eaqnvkveg-wasil-food-delivery.vercel.app"
+  ]
+}));
 app.use(express.json({ limit: "1mb" }));
 app.use("/uploads", express.static(uploadsDir));
 app.get("/api/health", (_req, res) => res.json({ ok: true, app: "Food Delivery API" }));
