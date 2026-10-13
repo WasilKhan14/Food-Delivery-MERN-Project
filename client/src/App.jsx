@@ -17,13 +17,6 @@ const FALLBACK = [
   { _id: "demo6", name: "Chocolate Dessert", category: "Desserts", price: 119, rating: 4.7, vegetarian: true, image: "https://images.unsplash.com/photo-1606313564200-e75d5e30476c?w=900", description: "A rich chocolate treat for sweet cravings." }
 ];
 
-const money = n =>
-  new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0
-  }).format(n || 0);
-
 const categories = ["All", "Burgers", "Pizza", "Chicken", "Healthy", "Sides", "Desserts"];
 
 const ORDER_STATUSES = [
@@ -35,12 +28,20 @@ const ORDER_STATUSES = [
   "Cancelled"
 ];
 
+const money = value =>
+  new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0
+  }).format(Number(value) || 0);
+
 export default function App() {
   const [menu, setMenu] = useState(FALLBACK);
   const [cart, setCart] = useState([]);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("All");
   const [toast, setToast] = useState("");
+
   const [cartOpen, setCartOpen] = useState(false);
   const [checkoutOpen, setCheckoutOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
@@ -60,6 +61,7 @@ export default function App() {
 
   const [orders, setOrders] = useState([]);
   const [authMode, setAuthMode] = useState("login");
+
   const [authForm, setAuthForm] = useState({
     name: "",
     email: "",
@@ -92,40 +94,58 @@ export default function App() {
     vegetarian: false
   });
 
+  // Load menu from backend.
   useEffect(() => {
     fetch(`${API}/menu`)
-      .then(r => r.ok ? r.json() : Promise.reject())
-      .then(data => {
-        if (Array.isArray(data) && data.length) setMenu(data);
+      .then(response => {
+        if (!response.ok) throw new Error("Could not load menu");
+        return response.json();
       })
-      .catch(() => {});
+      .then(data => {
+        if (Array.isArray(data) && data.length > 0) {
+          setMenu(data);
+        }
+      })
+      .catch(error => {
+        console.error("Menu loading error:", error);
+      });
   }, []);
 
   const filtered = useMemo(
     () =>
-      menu.filter(
-        x =>
-          (category === "All" || x.category === category) &&
-          `${x.name} ${x.description || ""}`
+      menu.filter(item => {
+        const categoryMatch =
+          category === "All" || item.category === category;
+
+        const searchMatch =
+          `${item.name} ${item.description || ""}`
             .toLowerCase()
-            .includes(search.toLowerCase())
-      ),
+            .includes(search.toLowerCase());
+
+        return categoryMatch && searchMatch;
+      }),
     [menu, category, search]
   );
 
-  const count = cart.reduce((s, x) => s + x.quantity, 0);
-  const subtotal = cart.reduce((s, x) => s + x.price * x.quantity, 0);
+  const count = cart.reduce((sum, item) => sum + item.quantity, 0);
+
+  const subtotal = cart.reduce(
+    (sum, item) => sum + Number(item.price) * item.quantity,
+    0
+  );
+
   const delivery = subtotal === 0 || subtotal >= 499 ? 0 : 30;
   const total = subtotal + delivery;
 
   const notify = message => {
     setToast(message);
-    setTimeout(() => setToast(""), 2800);
+    window.setTimeout(() => setToast(""), 2800);
   };
 
   const add = item => {
     setCart(old => {
       const found = old.find(x => x._id === item._id);
+
       return found
         ? old.map(x =>
             x._id === item._id
@@ -134,40 +154,51 @@ export default function App() {
           )
         : [...old, { ...item, quantity: 1 }];
     });
+
     notify(`${item.name} added to cart`);
   };
 
-  const changeQty = (id, delta) =>
+  const changeQty = (id, delta) => {
     setCart(old =>
       old
-        .map(x =>
-          x._id === id ? { ...x, quantity: x.quantity + delta } : x
+        .map(item =>
+          item._id === id
+            ? { ...item, quantity: item.quantity + delta }
+            : item
         )
-        .filter(x => x.quantity > 0)
-    );
-
-  const requestLocation = () => {
-    if (!navigator.geolocation) {
-      return notify("Geolocation is not supported by this browser.");
-    }
-
-    navigator.geolocation.getCurrentPosition(
-      pos =>
-        setForm(f => ({
-          ...f,
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude
-        })),
-      () => notify("Location permission denied. Enter your address manually.")
+        .filter(item => item.quantity > 0)
     );
   };
 
-  const submitAuth = async e => {
-    e.preventDefault();
+  const requestLocation = () => {
+    if (!navigator.geolocation) {
+      notify("Geolocation is not supported by this browser.");
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      position => {
+        setForm(old => ({
+          ...old,
+          lat: position.coords.latitude,
+          lng: position.coords.longitude
+        }));
+
+        notify("Location attached successfully.");
+      },
+      () => {
+        notify("Location permission denied. Enter your address manually.");
+      }
+    );
+  };
+
+  // Login and registration.
+  const submitAuth = async event => {
+    event.preventDefault();
     setBusy(true);
 
     try {
-      const r = await fetch(
+      const response = await fetch(
         `${API}/auth/${authMode === "login" ? "login" : "register"}`,
         {
           method: "POST",
@@ -176,15 +207,22 @@ export default function App() {
         }
       );
 
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.message || "Could not authenticate");
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || "Could not authenticate.");
+      }
 
       setToken(data.token);
       setUser(data.user);
+
       localStorage.setItem("fooddelivery_token", data.token);
       localStorage.setItem("fooddelivery_user", JSON.stringify(data.user));
+
       setAuthOpen(false);
-      notify("Welcome to Food Delivery!");
+      setAuthForm({ name: "", email: "", password: "" });
+
+      notify("Login successful!");
     } catch (error) {
       notify(error.message || "Could not authenticate.");
     } finally {
@@ -192,28 +230,33 @@ export default function App() {
     }
   };
 
+  // Load logged-in customer's order history.
   const loadOrders = async () => {
     if (!token) {
       setAuthOpen(true);
+      notify("Please sign in to view your orders.");
       return;
     }
 
     try {
-      const r = await fetch(`${API}/orders/mine`, {
+      const response = await fetch(`${API}/orders/mine`, {
         headers: { Authorization: `Bearer ${token}` }
       });
 
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.message || "Could not load orders");
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || "Could not load your orders.");
+      }
 
       setOrders(Array.isArray(data) ? data : []);
       setOrdersOpen(true);
     } catch (error) {
-      notify(error.message || "Could not load orders. Check server connection.");
+      notify(error.message || "Could not load orders.");
     }
   };
 
-  // Admin: load every customer's orders
+  // Admin: load orders from all customers.
   const loadAdminOrders = async () => {
     if (!token || user?.role !== "admin") {
       notify("Please sign in with your admin account.");
@@ -230,19 +273,19 @@ export default function App() {
       const data = await response.json();
 
       if (!response.ok) {
-        throw new Error(data.message || "Could not load admin orders");
+        throw new Error(data.message || "Could not load admin orders.");
       }
 
       setAdminOrders(Array.isArray(data) ? data : []);
       setAdminOrdersOpen(true);
     } catch (error) {
-      notify(error.message || "Could not load orders.");
+      notify(error.message || "Could not load admin orders.");
     } finally {
       setAdminOrdersLoading(false);
     }
   };
 
-  // Admin: update an order's status
+  // Admin: update order status.
   const updateOrderStatus = async (orderId, status) => {
     if (!token || user?.role !== "admin") {
       notify("Admin login required.");
@@ -281,11 +324,6 @@ export default function App() {
       );
 
       notify("Order status updated successfully!");
-
-      // Refresh customer order history if the current account owns this order.
-      if (user?.role === "customer") {
-        loadOrders();
-      }
     } catch (error) {
       notify(error.message || "Could not update order status.");
       await loadAdminOrders();
@@ -294,10 +332,14 @@ export default function App() {
     }
   };
 
-  const placeOrder = async e => {
-    e.preventDefault();
+  // Place a customer order.
+  const placeOrder = async event => {
+    event.preventDefault();
 
-    if (!cart.length) return;
+    if (!cart.length) {
+      notify("Your cart is empty.");
+      return;
+    }
 
     if (!token) {
       setCheckoutOpen(false);
@@ -309,16 +351,16 @@ export default function App() {
     setBusy(true);
 
     try {
-      const r = await fetch(`${API}/orders`, {
+      const response = await fetch(`${API}/orders`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`
         },
         body: JSON.stringify({
-          items: cart.map(x => ({
-            id: x._id,
-            quantity: x.quantity
+          items: cart.map(item => ({
+            id: item._id,
+            quantity: item.quantity
           })),
           address: form.address,
           phone: form.phone,
@@ -330,21 +372,26 @@ export default function App() {
         })
       });
 
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.message || "Order failed");
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || "Order failed.");
+      }
 
       setLastOrder(data);
       setCart([]);
       setCheckoutOpen(false);
       setCartOpen(false);
-      notify("Order placed successfully!");
-      setOrdersOpen(true);
+
       setOrders(old => [data, ...old]);
+      setOrdersOpen(true);
+
+      notify("Order placed successfully!");
     } catch (error) {
       notify(
         error.message === "Failed to fetch"
-          ? "Start the backend server to place an order."
-          : error.message
+          ? "Start the backend server before placing an order."
+          : error.message || "Order failed."
       );
     } finally {
       setBusy(false);
@@ -356,54 +403,69 @@ export default function App() {
     setToken("");
     setOrders([]);
     setAdminOrders([]);
+    setLastOrder(null);
+
     setAdminOrdersOpen(false);
     setOrdersOpen(false);
+
     localStorage.removeItem("fooddelivery_user");
     localStorage.removeItem("fooddelivery_token");
-    notify("Signed out");
+
+    notify("Signed out successfully.");
   };
 
-  const uploadImage = async e => {
-    const file = e.target.files?.[0];
+  // Admin: upload food image.
+  const uploadImage = async event => {
+    const file = event.target.files?.[0];
     if (!file) return;
 
     if (!token || user?.role !== "admin") {
-      return notify("Sign in with an admin account to upload images.");
+      notify("Sign in with an admin account to upload images.");
+      return;
     }
 
-    const fd = new FormData();
-    fd.append("image", file);
+    const formData = new FormData();
+    formData.append("image", file);
 
     try {
-      const r = await fetch(`${API}/upload`, {
+      const response = await fetch(`${API}/upload`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}` },
-        body: fd
+        body: formData
       });
 
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.message || "Image upload failed");
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || "Image upload failed.");
+      }
+
+      if (!data.image) {
+        throw new Error("Image URL was not returned by the server.");
+      }
 
       const imageUrl = data.image.startsWith("http")
         ? data.image
         : `http://localhost:5000${data.image}`;
 
-      setAdminForm(f => ({ ...f, image: imageUrl }));
-      notify("Image uploaded");
+      setAdminForm(old => ({ ...old, image: imageUrl }));
+      notify("Image uploaded successfully.");
     } catch (error) {
-      notify(error.message || "Image upload failed. Check server and admin access.");
+      notify(error.message || "Image upload failed.");
     }
   };
 
-  const addMenuItem = async e => {
-    e.preventDefault();
+  // Admin: add a menu item.
+  const addMenuItem = async event => {
+    event.preventDefault();
 
     if (!token || user?.role !== "admin") {
-      return notify("Admin login required to add menu items.");
+      notify("Admin login required to add menu items.");
+      return;
     }
 
     try {
-      const r = await fetch(`${API}/admin/menu`, {
+      const response = await fetch(`${API}/admin/menu`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -415,10 +477,16 @@ export default function App() {
         })
       });
 
-      const data = await r.json();
-      if (!r.ok) throw new Error(data.message || "Could not add menu item");
+      const data = await response.json();
 
-      setMenu(old => [data, ...old]);
+      if (!response.ok) {
+        throw new Error(data.message || "Could not add menu item.");
+      }
+
+      const newItem = data.item || data;
+
+      setMenu(old => [newItem, ...old]);
+
       setAdminForm({
         name: "",
         category: "Burgers",
@@ -427,18 +495,21 @@ export default function App() {
         image: "",
         vegetarian: false
       });
+
       setAdminOpen(false);
-      notify("Menu item added");
+      notify("Menu item added successfully.");
     } catch (error) {
-      notify(error.message || "Could not add menu item");
+      notify(error.message || "Could not add menu item.");
     }
   };
 
   return (
     <div className="app">
       <header className="topbar">
-        <a className="brand" href="#">
-          <span className="brand-icon"><Utensils size={22} /></span>
+        <a className="brand" href="#menu">
+          <span className="brand-icon">
+            <Utensils size={22} />
+          </span>
           <span>
             Food <span className="brand-orange">Delivery</span>
             <small>GOOD FOOD. GOOD MOOD.</small>
@@ -449,9 +520,20 @@ export default function App() {
           <MapPin size={18} />
           <div>
             <small>DELIVERING TO</small>
-            <strong>{form.address ? form.address.slice(0, 25) : "Your location"}</strong>
+            <strong>
+              {form.address
+                ? form.address.slice(0, 25)
+                : form.lat != null
+                  ? "Location attached"
+                  : "Your location"}
+            </strong>
           </div>
-          <button className="icon-button" onClick={requestLocation} title="Use my location">
+          <button
+            type="button"
+            className="icon-button"
+            onClick={requestLocation}
+            title="Use my location"
+          >
             <LocateFixed size={17} />
           </button>
         </div>
@@ -463,7 +545,8 @@ export default function App() {
 
           {user ? (
             <button className="nav-btn" onClick={signOut}>
-              <LogOut size={17} /> {user.name?.split(" ")[0] || "Account"}
+              <LogOut size={17} />
+              {user.name?.split(" ")[0] || "Account"}
             </button>
           ) : (
             <button className="nav-btn" onClick={() => setAuthOpen(true)}>
@@ -472,13 +555,20 @@ export default function App() {
           )}
 
           {user?.role === "admin" && (
-            <button className="nav-btn" onClick={loadAdminOrders}>
+            <button
+              className="nav-btn"
+              onClick={loadAdminOrders}
+              disabled={adminOrdersLoading}
+            >
               <PackageCheck size={17} />
               {adminOrdersLoading ? "Loading..." : "Admin Orders"}
             </button>
           )}
 
-          <button className="cart-button" onClick={() => setCartOpen(true)}>
+          <button
+            className="cart-button"
+            onClick={() => setCartOpen(true)}
+          >
             <ShoppingBag size={19} /> Cart <b>{count}</b>
           </button>
         </div>
@@ -487,12 +577,29 @@ export default function App() {
       <main>
         <section className="hero">
           <div className="hero-copy">
-            <span className="eyebrow"><span className="live-dot" /> FRESH • FAST • DELICIOUS</span>
-            <h1>Cravings? We’ve<br />got <em>you covered.</em></h1>
+            <span className="eyebrow">
+              <span className="live-dot" /> FRESH • FAST • DELICIOUS
+            </span>
+
+            <h1>
+              Cravings? We’ve
+              <br />
+              got <em>you covered.</em>
+            </h1>
+
             <p>Restaurant favourites, delivered fresh to your door.</p>
-            <button className="primary-btn" onClick={() => document.getElementById("menu")?.scrollIntoView({ behavior: "smooth" })}>
+
+            <button
+              className="primary-btn"
+              onClick={() =>
+                document.getElementById("menu")?.scrollIntoView({
+                  behavior: "smooth"
+                })
+              }
+            >
               Explore menu <span>↘</span>
             </button>
+
             <div className="hero-stats">
               <span><Clock size={17} /> 25–40 min</span>
               <span><Star size={17} fill="currentColor" /> 4.8 rated</span>
@@ -503,20 +610,41 @@ export default function App() {
           <div className="hero-art">
             <div className="hero-circle" />
             <img src={FALLBACK[0].image} alt="Delicious burger" />
+
             <div className="floating-card">
               <span>🔥</span>
-              <div><b>Top pick today</b><small>Classic Cheeseburger</small></div>
+              <div>
+                <b>Top pick today</b>
+                <small>Classic Cheeseburger</small>
+              </div>
               <strong>₹179</strong>
             </div>
-            <div className="floating-badge">MADE WITH<br />LOVE <span>♥</span></div>
+
+            <div className="floating-badge">
+              MADE WITH
+              <br />
+              LOVE <span>♥</span>
+            </div>
           </div>
         </section>
 
         <section className="benefits">
-          <div><span className="benefit-icon peach">♨</span><div><b>Freshly prepared</b><small>Made when you order</small></div></div>
-          <div><span className="benefit-icon yellow">⌁</span><div><b>Fast delivery</b><small>Hot food, happy mood</small></div></div>
-          <div><span className="benefit-icon green">✓</span><div><b>Quality ingredients</b><small>Goodness in every bite</small></div></div>
-          <div><span className="benefit-icon purple">♡</span><div><b>Made for you</b><small>Find your new favourite</small></div></div>
+          <div>
+            <span className="benefit-icon peach">♨</span>
+            <div><b>Freshly prepared</b><small>Made when you order</small></div>
+          </div>
+          <div>
+            <span className="benefit-icon yellow">⌁</span>
+            <div><b>Fast delivery</b><small>Hot food, happy mood</small></div>
+          </div>
+          <div>
+            <span className="benefit-icon green">✓</span>
+            <div><b>Quality ingredients</b><small>Goodness in every bite</small></div>
+          </div>
+          <div>
+            <span className="benefit-icon purple">♡</span>
+            <div><b>Made for you</b><small>Find your new favourite</small></div>
+          </div>
         </section>
 
         <section className="menu-section" id="menu">
@@ -526,102 +654,236 @@ export default function App() {
               <h2>Explore our <em>menu</em></h2>
               <p>Big flavours. Little moments of happiness.</p>
             </div>
+
             <label className="searchbox">
               <Search size={19} />
-              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search your cravings..." />
-              {search && <button onClick={() => setSearch("")}><X size={15} /></button>}
+              <input
+                value={search}
+                onChange={event => setSearch(event.target.value)}
+                placeholder="Search your cravings..."
+              />
+              {search && (
+                <button
+                  type="button"
+                  onClick={() => setSearch("")}
+                  aria-label="Clear search"
+                >
+                  <X size={15} />
+                </button>
+              )}
             </label>
           </div>
 
           <div className="categories">
-            {categories.map(c => (
-              <button key={c} className={category === c ? "category active" : "category"} onClick={() => setCategory(c)}>
-                {c}
+            {categories.map(itemCategory => (
+              <button
+                key={itemCategory}
+                className={
+                  category === itemCategory
+                    ? "category active"
+                    : "category"
+                }
+                onClick={() => setCategory(itemCategory)}
+              >
+                {itemCategory}
               </button>
             ))}
           </div>
 
           <div className="food-grid">
-            {filtered.map((item, i) => (
+            {filtered.map((item, index) => (
               <article className="food-card" key={item._id}>
                 <div className="food-image">
-                  <img src={item.image || FALLBACK[i % FALLBACK.length].image} alt={item.name} onError={e => { e.currentTarget.src = FALLBACK[0].image; }} />
-                  <span className="food-tag">{item.vegetarian ? "🌱 Veg" : "Chef's pick"}</span>
-                  <button className="add-btn" onClick={() => add(item)} aria-label={`Add ${item.name}`}>
+                  <img
+                    src={item.image || FALLBACK[index % FALLBACK.length].image}
+                    alt={item.name}
+                    onError={event => {
+                      event.currentTarget.src = FALLBACK[0].image;
+                    }}
+                  />
+
+                  <span className="food-tag">
+                    {item.vegetarian ? "🌱 Veg" : "Chef's pick"}
+                  </span>
+
+                  <button
+                    className="add-btn"
+                    onClick={() => add(item)}
+                    aria-label={`Add ${item.name}`}
+                  >
                     <Plus size={21} />
                   </button>
                 </div>
+
                 <div className="food-info">
                   <div className="food-title">
                     <h3>{item.name}</h3>
-                    <span className="rating"><Star size={13} fill="currentColor" />{item.rating || 4.5}</span>
+                    <span className="rating">
+                      <Star size={13} fill="currentColor" />
+                      {item.rating || 4.5}
+                    </span>
                   </div>
+
                   <p>{item.description}</p>
-                  <div className="food-bottom"><strong>{money(item.price)}</strong><span>{item.category}</span></div>
+
+                  <div className="food-bottom">
+                    <strong>{money(item.price)}</strong>
+                    <span>{item.category}</span>
+                  </div>
                 </div>
               </article>
             ))}
           </div>
 
-          {filtered.length === 0 && <div className="empty"><Search size={30} /><h3>No bites found</h3><p>Try another search or category.</p></div>}
+          {filtered.length === 0 && (
+            <div className="empty">
+              <Search size={30} />
+              <h3>No bites found</h3>
+              <p>Try another search or category.</p>
+            </div>
+          )}
         </section>
 
         <section className="promo">
           <div>
             <span className="eyebrow">A LITTLE SOMETHING EXTRA</span>
-            <h2>Good things come<br />to those who <em>order.</em></h2>
+            <h2>
+              Good things come
+              <br />
+              to those who <em>order.</em>
+            </h2>
             <p>Delivery is on us when your order reaches ₹499.</p>
-            <button className="primary-btn" onClick={() => document.getElementById("menu")?.scrollIntoView({ behavior: "smooth" })}>Find your favourites ↗</button>
+            <button
+              className="primary-btn"
+              onClick={() =>
+                document.getElementById("menu")?.scrollIntoView({
+                  behavior: "smooth"
+                })
+              }
+            >
+              Find your favourites ↗
+            </button>
           </div>
-          <div className="promo-emoji">🍕<span>🍟</span><i>🥤</i></div>
+
+          <div className="promo-emoji">
+            🍕<span>🍟</span><i>🥤</i>
+          </div>
         </section>
 
         <section className="bottom-note">
-          <div><span className="brand-icon"><Utensils size={20} /></span><h3>Food Delivery</h3></div>
+          <div>
+            <span className="brand-icon"><Utensils size={20} /></span>
+            <h3>Food Delivery</h3>
+          </div>
           <p>A student-built food delivery demo. Fresh ideas, one order at a time.</p>
           <small>Demo project • Payments are simulated • © 2026 Food Delivery</small>
         </section>
       </main>
 
-      {toast && <div className="toast"><CheckCircle2 size={18} />{toast}</div>}
+      {toast && (
+        <div className="toast">
+          <CheckCircle2 size={18} />
+          {toast}
+        </div>
+      )}
 
+      {/* CART */}
       {cartOpen && (
-        <div className="overlay" onMouseDown={e => e.target === e.currentTarget && setCartOpen(false)}>
+        <div
+          className="overlay"
+          onMouseDown={event => {
+            if (event.target === event.currentTarget) setCartOpen(false);
+          }}
+        >
           <aside className="drawer">
             <div className="drawer-head">
-              <div><span className="eyebrow">YOUR SELECTION</span><h2>Your cart <span>({count})</span></h2></div>
-              <button className="close-btn" onClick={() => setCartOpen(false)}><X /></button>
+              <div>
+                <span className="eyebrow">YOUR SELECTION</span>
+                <h2>Your cart <span>({count})</span></h2>
+              </div>
+              <button className="close-btn" onClick={() => setCartOpen(false)}>
+                <X />
+              </button>
             </div>
 
             {!cart.length ? (
               <div className="empty cart-empty">
-                <span>🛍️</span><h3>Your cart is hungry</h3><p>Add something delicious to get started.</p>
-                <button className="primary-btn" onClick={() => { setCartOpen(false); document.getElementById("menu")?.scrollIntoView({ behavior: "smooth" }); }}>Browse menu</button>
+                <span>🛍️</span>
+                <h3>Your cart is hungry</h3>
+                <p>Add something delicious to get started.</p>
+                <button
+                  className="primary-btn"
+                  onClick={() => {
+                    setCartOpen(false);
+                    document.getElementById("menu")?.scrollIntoView({
+                      behavior: "smooth"
+                    });
+                  }}
+                >
+                  Browse menu
+                </button>
               </div>
             ) : (
               <>
                 <div className="cart-lines">
-                  {cart.map(x => (
-                    <div className="cart-line" key={x._id}>
-                      <img src={x.image} alt={x.name} />
+                  {cart.map(item => (
+                    <div className="cart-line" key={item._id}>
+                      <img src={item.image} alt={item.name} />
+
                       <div className="cart-line-info">
-                        <b>{x.name}</b><strong>{money(x.price)}</strong>
+                        <b>{item.name}</b>
+                        <strong>{money(item.price)}</strong>
+
                         <div className="qty">
-                          <button onClick={() => changeQty(x._id, -1)}><Minus size={14} /></button>
-                          <span>{x.quantity}</span>
-                          <button onClick={() => changeQty(x._id, 1)}><Plus size={14} /></button>
+                          <button onClick={() => changeQty(item._id, -1)}>
+                            <Minus size={14} />
+                          </button>
+                          <span>{item.quantity}</span>
+                          <button onClick={() => changeQty(item._id, 1)}>
+                            <Plus size={14} />
+                          </button>
                         </div>
                       </div>
-                      <button className="remove-btn" onClick={() => setCart(old => old.filter(y => y._id !== x._id))}><X size={16} /></button>
+
+                      <button
+                        className="remove-btn"
+                        onClick={() =>
+                          setCart(old => old.filter(x => x._id !== item._id))
+                        }
+                      >
+                        <X size={16} />
+                      </button>
                     </div>
                   ))}
                 </div>
+
                 <div className="bill">
                   <div><span>Subtotal</span><b>{money(subtotal)}</b></div>
-                  <div><span>Delivery fee</span><b>{delivery === 0 ? "FREE" : money(delivery)}</b></div>
-                  {subtotal > 0 && subtotal < 499 && <small>Add {money(499 - subtotal)} more for free delivery</small>}
-                  <div className="bill-total"><span>Total</span><strong>{money(total)}</strong></div>
-                  <button className="primary-btn full" onClick={() => { setCartOpen(false); setCheckoutOpen(true); }}>Continue to checkout ↗</button>
+                  <div>
+                    <span>Delivery fee</span>
+                    <b>{delivery === 0 ? "FREE" : money(delivery)}</b>
+                  </div>
+
+                  {subtotal > 0 && subtotal < 499 && (
+                    <small>
+                      Add {money(499 - subtotal)} more for free delivery
+                    </small>
+                  )}
+
+                  <div className="bill-total">
+                    <span>Total</span>
+                    <strong>{money(total)}</strong>
+                  </div>
+
+                  <button
+                    className="primary-btn full"
+                    onClick={() => {
+                      setCartOpen(false);
+                      setCheckoutOpen(true);
+                    }}
+                  >
+                    Continue to checkout ↗
+                  </button>
                 </div>
               </>
             )}
@@ -629,60 +891,238 @@ export default function App() {
         </div>
       )}
 
+      {/* CHECKOUT */}
       {checkoutOpen && (
         <div className="overlay">
           <section className="modal">
             <div className="modal-head">
-              <div><span className="eyebrow">ALMOST THERE</span><h2>Checkout</h2></div>
-              <button className="close-btn" onClick={() => setCheckoutOpen(false)}><X /></button>
+              <div>
+                <span className="eyebrow">ALMOST THERE</span>
+                <h2>Checkout</h2>
+              </div>
+              <button className="close-btn" onClick={() => setCheckoutOpen(false)}>
+                <X />
+              </button>
             </div>
+
             <form onSubmit={placeOrder} className="checkout-form">
-              <label>Delivery address<textarea required minLength="8" value={form.address} onChange={e => setForm(f => ({ ...f, address: e.target.value }))} placeholder="Flat / house, street, area, city" /></label>
-              <button type="button" className="location-btn" onClick={requestLocation}><LocateFixed size={17} />{form.lat != null ? "Location attached" : "Use my current location"}</button>
-              <label>Phone number<input required value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} placeholder="Your contact number" inputMode="tel" minLength="8" /></label>
-              <label>Payment method<select value={form.paymentMethod} onChange={e => setForm(f => ({ ...f, paymentMethod: e.target.value }))}><option value="COD">Cash on Delivery</option><option value="DEMO_ONLINE">Online payment (demo simulation)</option></select></label>
-              {form.paymentMethod === "DEMO_ONLINE" && <div className="demo-warning">Demo only: no real money is charged. Do not enter card details.</div>}
-              <div className="checkout-total"><span>Total payable</span><strong>{money(total)}</strong></div>
-              <button className="primary-btn full" disabled={busy}>{busy ? "Placing order..." : `Place order • ${money(total)}`}</button>
+              <label>
+                Delivery address
+                <textarea
+                  required
+                  minLength={8}
+                  value={form.address}
+                  onChange={event =>
+                    setForm(old => ({ ...old, address: event.target.value }))
+                  }
+                  placeholder="Flat / house, street, area, city"
+                />
+              </label>
+
+              <button
+                type="button"
+                className="location-btn"
+                onClick={requestLocation}
+              >
+                <LocateFixed size={17} />
+                {form.lat != null
+                  ? "Location attached"
+                  : "Use my current location"}
+              </button>
+
+              <label>
+                Phone number
+                <input
+                  required
+                  value={form.phone}
+                  onChange={event =>
+                    setForm(old => ({ ...old, phone: event.target.value }))
+                  }
+                  placeholder="Your contact number"
+                  inputMode="tel"
+                  minLength={8}
+                />
+              </label>
+
+              <label>
+                Payment method
+                <select
+                  value={form.paymentMethod}
+                  onChange={event =>
+                    setForm(old => ({
+                      ...old,
+                      paymentMethod: event.target.value
+                    }))
+                  }
+                >
+                  <option value="COD">Cash on Delivery</option>
+                  <option value="DEMO_ONLINE">
+                    Online payment (demo simulation)
+                  </option>
+                </select>
+              </label>
+
+              {form.paymentMethod === "DEMO_ONLINE" && (
+                <div className="demo-warning">
+                  Demo only: no real money is charged. Do not enter card details.
+                </div>
+              )}
+
+              <div className="checkout-total">
+                <span>Total payable</span>
+                <strong>{money(total)}</strong>
+              </div>
+
+              <button className="primary-btn full" disabled={busy}>
+                {busy ? "Placing order..." : `Place order • ${money(total)}`}
+              </button>
             </form>
           </section>
         </div>
       )}
 
+      {/* LOGIN / REGISTER */}
       {authOpen && (
         <div className="overlay">
           <section className="modal auth-modal">
             <div className="modal-head">
-              <div><span className="eyebrow">WELCOME TO FOOD DELIVERY</span><h2>{authMode === "login" ? "Good to see you" : "Create account"}</h2></div>
-              <button className="close-btn" onClick={() => setAuthOpen(false)}><X /></button>
+              <div>
+                <span className="eyebrow">WELCOME TO FOOD DELIVERY</span>
+                <h2>
+                  {authMode === "login" ? "Good to see you" : "Create account"}
+                </h2>
+              </div>
+              <button className="close-btn" onClick={() => setAuthOpen(false)}>
+                <X />
+              </button>
             </div>
+
             <form className="checkout-form" onSubmit={submitAuth}>
-              {authMode === "register" && <label>Full name<input required value={authForm.name} onChange={e => setAuthForm(f => ({ ...f, name: e.target.value }))} placeholder="Your name" /></label>}
-              <label>Email address<input type="email" required value={authForm.email} onChange={e => setAuthForm(f => ({ ...f, email: e.target.value }))} placeholder="you@example.com" /></label>
-              <label>Password<input type="password" minLength="6" required value={authForm.password} onChange={e => setAuthForm(f => ({ ...f, password: e.target.value }))} placeholder="At least 6 characters" /></label>
-              <button className="primary-btn full" disabled={busy}>{busy ? "Please wait..." : authMode === "login" ? "Sign in" : "Create account"}</button>
+              {authMode === "register" && (
+                <label>
+                  Full name
+                  <input
+                    required
+                    value={authForm.name}
+                    onChange={event =>
+                      setAuthForm(old => ({ ...old, name: event.target.value }))
+                    }
+                    placeholder="Your name"
+                  />
+                </label>
+              )}
+
+              <label>
+                Email address
+                <input
+                  type="email"
+                  required
+                  value={authForm.email}
+                  onChange={event =>
+                    setAuthForm(old => ({ ...old, email: event.target.value }))
+                  }
+                  placeholder="you@example.com"
+                />
+              </label>
+
+              <label>
+                Password
+                <input
+                  type="password"
+                  minLength={6}
+                  required
+                  value={authForm.password}
+                  onChange={event =>
+                    setAuthForm(old => ({
+                      ...old,
+                      password: event.target.value
+                    }))
+                  }
+                  placeholder="At least 6 characters"
+                />
+              </label>
+
+              <button className="primary-btn full" disabled={busy}>
+                {busy
+                  ? "Please wait..."
+                  : authMode === "login"
+                    ? "Sign in"
+                    : "Create account"}
+              </button>
             </form>
-            <p className="switch-auth">{authMode === "login" ? "New here?" : "Already have an account?"} <button onClick={() => setAuthMode(authMode === "login" ? "register" : "login")}>{authMode === "login" ? "Create an account" : "Sign in"}</button></p>
+
+            <p className="switch-auth">
+              {authMode === "login"
+                ? "New here?"
+                : "Already have an account?"}{" "}
+              <button
+                onClick={() =>
+                  setAuthMode(old => old === "login" ? "register" : "login")
+                }
+              >
+                {authMode === "login" ? "Create an account" : "Sign in"}
+              </button>
+            </p>
           </section>
         </div>
       )}
 
+      {/* CUSTOMER ORDERS */}
       {ordersOpen && (
         <div className="overlay">
           <section className="modal orders-modal">
             <div className="modal-head">
-              <div><span className="eyebrow">YOUR FOOD JOURNEY</span><h2>Order updates</h2></div>
-              <button className="close-btn" onClick={() => setOrdersOpen(false)}><X /></button>
+              <div>
+                <span className="eyebrow">YOUR FOOD JOURNEY</span>
+                <h2>Order updates</h2>
+              </div>
+              <button className="close-btn" onClick={() => setOrdersOpen(false)}>
+                <X />
+              </button>
             </div>
-            {lastOrder && <div className="order-success"><CheckCircle2 size={23} /><div><b>Order placed!</b><small>Order #{String(lastOrder._id).slice(-7)} • {lastOrder.status}</small></div></div>}
-            {orders.length === 0 ? <div className="empty"><PackageCheck size={32} /><p>No orders to show yet. Place your first order!</p></div> : (
+
+            {lastOrder && (
+              <div className="order-success">
+                <CheckCircle2 size={23} />
+                <div>
+                  <b>Order placed!</b>
+                  <small>
+                    Order #{String(lastOrder._id).slice(-7)} • {lastOrder.status}
+                  </small>
+                </div>
+              </div>
+            )}
+
+            {orders.length === 0 ? (
+              <div className="empty">
+                <PackageCheck size={32} />
+                <p>No orders to show yet. Place your first order!</p>
+              </div>
+            ) : (
               <div className="orders-list">
-                {orders.map(o => (
-                  <article className="order-card" key={o._id}>
-                    <div><b>Order #{String(o._id).slice(-7)}</b><span className="status-pill">{o.status}</span></div>
-                    <p>{(o.items || []).map(i => `${i.name} ×${i.quantity}`).join(", ")}</p>
-                    <div className="order-foot"><span>{o.paymentMethod === "COD" ? "Cash on Delivery" : "Demo online payment"}</span><strong>{money(o.total)}</strong></div>
-                    <small>Delivery to: {o.address}</small>
+                {orders.map(order => (
+                  <article className="order-card" key={order._id}>
+                    <div>
+                      <b>Order #{String(order._id).slice(-7)}</b>
+                      <span className="status-pill">{order.status || "Placed"}</span>
+                    </div>
+
+                    <p>
+                      {(order.items || [])
+                        .map(item => `${item.name} ×${item.quantity}`)
+                        .join(", ")}
+                    </p>
+
+                    <div className="order-foot">
+                      <span>
+                        {order.paymentMethod === "COD"
+                          ? "Cash on Delivery"
+                          : "Demo online payment"}
+                      </span>
+                      <strong>{money(order.total)}</strong>
+                    </div>
+
+                    <small>Delivery to: {order.address}</small>
                   </article>
                 ))}
               </div>
@@ -691,12 +1131,21 @@ export default function App() {
         </div>
       )}
 
+      {/* ADMIN ORDERS */}
       {adminOrdersOpen && (
         <div className="overlay">
           <section className="modal orders-modal">
             <div className="modal-head">
-              <div><span className="eyebrow">ADMIN DASHBOARD</span><h2>Customer Orders ({adminOrders.length})</h2></div>
-              <button className="close-btn" onClick={() => setAdminOrdersOpen(false)}><X /></button>
+              <div>
+                <span className="eyebrow">ADMIN DASHBOARD</span>
+                <h2>Customer Orders ({adminOrders.length})</h2>
+              </div>
+              <button
+                className="close-btn"
+                onClick={() => setAdminOrdersOpen(false)}
+              >
+                <X />
+              </button>
             </div>
 
             <button
@@ -708,22 +1157,45 @@ export default function App() {
               {adminOrdersLoading ? "Refreshing..." : "Refresh orders"}
             </button>
 
-            {adminOrdersLoading && adminOrders.length === 0 ? <p>Loading orders...</p> : adminOrders.length === 0 ? (
-              <div className="empty"><PackageCheck size={32} /><p>No orders found.</p></div>
+            {adminOrdersLoading && adminOrders.length === 0 ? (
+              <p>Loading orders...</p>
+            ) : adminOrders.length === 0 ? (
+              <div className="empty">
+                <PackageCheck size={32} />
+                <p>No orders found.</p>
+              </div>
             ) : (
               <div className="orders-list">
                 {adminOrders.map(order => (
                   <article className="order-card" key={order._id}>
                     <div>
                       <b>Order #{String(order._id).slice(-7)}</b>
-                      <span className="status-pill">{order.status || "Placed"}</span>
+                      <span className="status-pill">
+                        {order.status || "Placed"}
+                      </span>
                     </div>
-                    <p>Customer: {order.user?.name || "Customer"}{order.user?.email ? ` (${order.user.email})` : ""}</p>
-                    <p>{(order.items || []).map(item => `${item.name} ×${item.quantity}`).join(", ")}</p>
+
+                    <p>
+                      Customer: {order.user?.name || "Customer"}
+                      {order.user?.email ? ` (${order.user.email})` : ""}
+                    </p>
+
+                    <p>
+                      {(order.items || [])
+                        .map(item => `${item.name} ×${item.quantity}`)
+                        .join(", ")}
+                    </p>
+
                     <p>Address: {order.address || "Not provided"}</p>
                     <p>Phone: {order.phone || "Not provided"}</p>
+
                     <div className="order-foot">
-                      <span>{order.paymentMethod === "COD" ? "Cash on Delivery" : "Online payment (demo)"} · Payment: {order.paymentStatus || "pending"}</span>
+                      <span>
+                        {order.paymentMethod === "COD"
+                          ? "Cash on Delivery"
+                          : "Online payment (demo)"}
+                        {" · "}Payment: {order.paymentStatus || "pending"}
+                      </span>
                       <strong>{money(order.total)}</strong>
                     </div>
 
@@ -732,15 +1204,21 @@ export default function App() {
                       <select
                         value={order.status || "Placed"}
                         disabled={updatingOrderId === order._id}
-                        onChange={e => updateOrderStatus(order._id, e.target.value)}
+                        onChange={event =>
+                          updateOrderStatus(order._id, event.target.value)
+                        }
                       >
                         {ORDER_STATUSES.map(status => (
-                          <option key={status} value={status}>{status}</option>
+                          <option key={status} value={status}>
+                            {status}
+                          </option>
                         ))}
                       </select>
                     </label>
 
-                    {updatingOrderId === order._id && <small>Saving status...</small>}
+                    {updatingOrderId === order._id && (
+                      <small>Saving status...</small>
+                    )}
                   </article>
                 ))}
               </div>
@@ -749,29 +1227,125 @@ export default function App() {
         </div>
       )}
 
+      {/* ADMIN: ADD MENU ITEM */}
       {adminOpen && (
         <div className="overlay">
           <section className="modal">
             <div className="modal-head">
-              <div><span className="eyebrow">MENU MANAGEMENT</span><h2>Add food item</h2></div>
-              <button className="close-btn" onClick={() => setAdminOpen(false)}><X /></button>
+              <div>
+                <span className="eyebrow">MENU MANAGEMENT</span>
+                <h2>Add food item</h2>
+              </div>
+              <button className="close-btn" onClick={() => setAdminOpen(false)}>
+                <X />
+              </button>
             </div>
+
             <form className="checkout-form" onSubmit={addMenuItem}>
-              <label>Food name<input required value={adminForm.name} onChange={e => setAdminForm(f => ({ ...f, name: e.target.value }))} /></label>
-              <label>Category<select value={adminForm.category} onChange={e => setAdminForm(f => ({ ...f, category: e.target.value }))}>{categories.filter(x => x !== "All").map(c => <option key={c}>{c}</option>)}</select></label>
-              <label>Price (₹)<input type="number" min="1" required value={adminForm.price} onChange={e => setAdminForm(f => ({ ...f, price: e.target.value }))} /></label>
-              <label>Description<input value={adminForm.description} onChange={e => setAdminForm(f => ({ ...f, description: e.target.value }))} /></label>
-              <label>Image URL<input value={adminForm.image} onChange={e => setAdminForm(f => ({ ...f, image: e.target.value }))} placeholder="https://..." /></label>
-              <label className="file-label"><ImagePlus size={17} /> Upload food photo<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={uploadImage} /></label>
-              <label className="check-label"><input type="checkbox" checked={adminForm.vegetarian} onChange={e => setAdminForm(f => ({ ...f, vegetarian: e.target.checked }))} /> Vegetarian</label>
-              <button className="primary-btn full">Save menu item</button>
+              <label>
+                Food name
+                <input
+                  required
+                  value={adminForm.name}
+                  onChange={event =>
+                    setAdminForm(old => ({ ...old, name: event.target.value }))
+                  }
+                />
+              </label>
+
+              <label>
+                Category
+                <select
+                  value={adminForm.category}
+                  onChange={event =>
+                    setAdminForm(old => ({
+                      ...old,
+                      category: event.target.value
+                    }))
+                  }
+                >
+                  {categories.filter(item => item !== "All").map(item => (
+                    <option key={item} value={item}>{item}</option>
+                  ))}
+                </select>
+              </label>
+
+              <label>
+                Price (₹)
+                <input
+                  type="number"
+                  min="1"
+                  required
+                  value={adminForm.price}
+                  onChange={event =>
+                    setAdminForm(old => ({ ...old, price: event.target.value }))
+                  }
+                />
+              </label>
+
+              <label>
+                Description
+                <input
+                  value={adminForm.description}
+                  onChange={event =>
+                    setAdminForm(old => ({
+                      ...old,
+                      description: event.target.value
+                    }))
+                  }
+                />
+              </label>
+
+              <label>
+                Image URL
+                <input
+                  value={adminForm.image}
+                  onChange={event =>
+                    setAdminForm(old => ({ ...old, image: event.target.value }))
+                  }
+                  placeholder="https://..."
+                />
+              </label>
+
+              <label className="file-label">
+                <ImagePlus size={17} /> Upload food photo
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp,image/gif"
+                  onChange={uploadImage}
+                />
+              </label>
+
+              <label className="check-label">
+                <input
+                  type="checkbox"
+                  checked={adminForm.vegetarian}
+                  onChange={event =>
+                    setAdminForm(old => ({
+                      ...old,
+                      vegetarian: event.target.checked
+                    }))
+                  }
+                />
+                Vegetarian
+              </label>
+
+              <button className="primary-btn full" disabled={busy}>
+                Save menu item
+              </button>
             </form>
           </section>
         </div>
       )}
 
       {user?.role === "admin" && (
-        <button className="admin-fab" onClick={() => setAdminOpen(true)} title="Add food item">＋</button>
+        <button
+          className="admin-fab"
+          onClick={() => setAdminOpen(true)}
+          title="Add food item"
+        >
+          ＋
+        </button>
       )}
     </div>
   );
